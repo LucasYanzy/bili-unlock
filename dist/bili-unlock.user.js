@@ -2,7 +2,7 @@
 // @name         bili-unlock · B站解锁+加速
 // @name:en      bili-unlock
 // @namespace    https://github.com/LucasYanzy/bili-unlock
-// @version      0.1.0
+// @version      0.1.1
 // @description  B站 海外看番：解除地区限制（通过代理）+ 播放加速
 // @description:en Watch region-locked Bilibili shows from abroad via a proxy, with smoother playback.
 // @author       LucasYanzy
@@ -4458,7 +4458,7 @@
 ;(function biliUnlock() {
 'use strict'
 const __BU_DEV__ = false
-const __BU_VERSION__ = '0.1.0'
+const __BU_VERSION__ = '0.1.1'
 
 // ===== src/md5.js =====
 // 精简版 MD5（RFC 1321），只用于 B站 TV 登录接口的签名。
@@ -4814,7 +4814,8 @@ function playDurl(video, result) {
 // ---- 盖在原播放器上的解锁面板 ----
 
 const CSS = `
-.bu-layer{position:absolute;inset:0;z-index:50;background:#000;display:flex;align-items:center;justify-content:center;font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;color:#e8e8e8}
+#big-block-panel{display:none!important}
+.bu-layer{position:absolute;inset:0;z-index:1000;background:#000;display:flex;align-items:center;justify-content:center;font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;color:#e8e8e8}
 .bu-layer video{position:absolute;inset:0;width:100%;height:100%;background:#000}
 .bu-card{position:relative;max-width:440px;padding:22px 24px;text-align:center}
 .bu-card h3{margin:0 0 8px;font-size:17px;font-weight:600;color:#fff}
@@ -4829,8 +4830,11 @@ const CSS = `
 `
 
 function findPlayerBox() {
-    const byId = document.querySelector('#bilibili-player')
-    if (byId && byId.offsetWidth > 300) return byId
+    // 2026 版番剧页：#bilibili-player-wrap > … > #bilibili-player > #big-block-panel(z=100, 阻断提示)
+    for (const sel of ['#bilibili-player-wrap', '#bilibili-player']) {
+        const e = document.querySelector(sel)
+        if (e && e.offsetWidth > 300) return e
+    }
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
     let n
     while ((n = walker.nextNode())) {

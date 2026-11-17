@@ -1,7 +1,8 @@
 // ---- 盖在原播放器上的解锁面板 ----
 
 const CSS = `
-.bu-layer{position:absolute;inset:0;z-index:50;background:#000;display:flex;align-items:center;justify-content:center;font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;color:#e8e8e8}
+#big-block-panel{display:none!important}
+.bu-layer{position:absolute;inset:0;z-index:1000;background:#000;display:flex;align-items:center;justify-content:center;font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;color:#e8e8e8}
 .bu-layer video{position:absolute;inset:0;width:100%;height:100%;background:#000}
 .bu-card{position:relative;max-width:440px;padding:22px 24px;text-align:center}
 .bu-card h3{margin:0 0 8px;font-size:17px;font-weight:600;color:#fff}
@@ -16,8 +17,11 @@ const CSS = `
 `
 
 function findPlayerBox() {
-    const byId = document.querySelector('#bilibili-player')
-    if (byId && byId.offsetWidth > 300) return byId
+    // 2026 版番剧页：#bilibili-player-wrap > … > #bilibili-player > #big-block-panel(z=100, 阻断提示)
+    for (const sel of ['#bilibili-player-wrap', '#bilibili-player']) {
+        const e = document.querySelector(sel)
+        if (e && e.offsetWidth > 300) return e
+    }
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
     let n
     while ((n = walker.nextNode())) {
