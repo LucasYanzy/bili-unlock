@@ -1,0 +1,13 @@
+{
+  "name": "bili-unlock",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Userscript: watch region-locked Bilibili content from abroad via a proxy, with built-in playback acceleration.",
+  "repository": "github:LucasYanzy/bili-unlock",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/*.test.js"
+  }
+}
