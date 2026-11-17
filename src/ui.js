@@ -15,6 +15,7 @@ const CSS = `
 #big-block-panel{display:none!important}
 .bu-layer{--bu-accent:#00aeec;--bu-accent2:#fb7299;position:absolute;inset:0;z-index:1000;background:#0b0d10;color:#e9edf1;font:14px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;overflow:hidden;user-select:none;-webkit-user-select:none}
 .bu-layer *{box-sizing:border-box}
+.bu-layer:focus{outline:none}
 .bu-layer.bu-webfs{position:fixed;z-index:2147483000}
 .bu-layer video{position:absolute;inset:0;width:100%;height:100%;background:#000;outline:none}
 .bu-layer svg{width:16px;height:16px;display:block;flex:none}
@@ -52,7 +53,7 @@ const CSS = `
 .bu-toast{position:absolute;left:50%;top:18%;z-index:4;transform:translate(-50%,-6px);padding:8px 14px;border-radius:10px;background:rgba(0,0,0,.72);color:#fff;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s}
 .bu-toast.show{opacity:1;transform:translate(-50%,0)}
 .bu-modal{position:absolute;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(5,7,10,.62);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
-.bu-sheet{width:min(560px,100%);max-height:100%;overflow:auto;border-radius:16px;background:#151a20;box-shadow:0 24px 80px rgba(0,0,0,.6),inset 0 0 0 1px rgba(255,255,255,.07);user-select:text;-webkit-user-select:text}
+.bu-sheet{outline:none;width:min(560px,100%);max-height:100%;overflow:auto;border-radius:16px;background:#151a20;box-shadow:0 24px 80px rgba(0,0,0,.6),inset 0 0 0 1px rgba(255,255,255,.07);user-select:text;-webkit-user-select:text}
 .bu-sheet header{position:sticky;top:0;display:flex;align-items:center;gap:10px;padding:14px 16px;background:#151a20;border-bottom:1px solid rgba(255,255,255,.06);z-index:1}
 .bu-sheet header h4{margin:0;flex:1;font-size:15px;color:#fff}
 .bu-sec{padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.05)}
