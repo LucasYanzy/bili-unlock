@@ -4946,14 +4946,14 @@ const CSS = `
 .bu-toast.show{opacity:1;transform:translate(-50%,0)}
 .bu-modal{position:absolute;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(5,7,10,.62);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
 .bu-sheet{outline:none;width:min(560px,100%);max-height:100%;overflow:auto;border-radius:16px;background:#151a20;box-shadow:0 24px 80px rgba(0,0,0,.6),inset 0 0 0 1px rgba(255,255,255,.07);user-select:text;-webkit-user-select:text}
-.bu-sheet header{position:sticky;top:0;display:flex;align-items:center;gap:10px;padding:14px 16px;background:#151a20;border-bottom:1px solid rgba(255,255,255,.06);z-index:1}
-.bu-sheet header h4{margin:0;flex:1;font-size:15px;color:#fff}
+.bu-sheet .bu-head{position:sticky;top:0;display:flex;align-items:center;gap:10px;padding:14px 16px;background:#151a20;border-bottom:1px solid rgba(255,255,255,.06);z-index:1}
+.bu-sheet .bu-head h4{margin:0;flex:1;font-size:15px;color:#fff}
 .bu-sec{padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.05)}
 .bu-sec:last-child{border-bottom:0}
 .bu-sec h5{margin:0 0 10px;font-size:12px;font-weight:650;letter-spacing:.6px;color:#7d8893;text-transform:uppercase}
 .bu-row{display:flex;align-items:center;gap:8px;margin:6px 0}
 .bu-row .bu-grow{font-size:13px;color:#dfe5ea}
-.bu-row .bu-hint{display:block;font-size:11.5px;color:#7d8893}
+.bu-hint{display:block;font-size:11.5px;line-height:1.5;color:#7d8893;font-weight:400}
 .bu-srv{display:flex;align-items:center;gap:6px;padding:7px 8px;margin:4px 0;border-radius:9px;background:rgba(255,255,255,.04)}
 .bu-srv code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px ui-monospace,Menlo,monospace;color:#dfe5ea}
 .bu-pill{font-size:11px;padding:2px 7px;border-radius:999px;background:rgba(255,255,255,.08);color:#9aa6b2;white-space:nowrap}
@@ -5115,7 +5115,7 @@ function openSettings(layer, { onChange } = {}) {
     const sheet = el('div', { class: 'bu-sheet', role: 'dialog', 'aria-label': 'bili-unlock 设置' })
     modal.appendChild(sheet)
 
-    sheet.appendChild(el('header', {}, [
+    sheet.appendChild(el('div', { class: 'bu-head' }, [
         iconEl('gear'),
         el('h4', { text: 'bili-unlock 设置' }),
         el('button', { class: 'bu-iconbtn', title: '关闭 (Esc)', html: ICON.close, on: { click: close } }),
@@ -5190,7 +5190,7 @@ function openSettings(layer, { onChange } = {}) {
                 }),
                 el('button', { class: 'bu-btn sm ghost', text: '恢复默认', on: { click: () => { config.servers = DEFAULT_SERVERS; changed.servers = true; renderServers() } } }),
             ]),
-            el('span', { class: 'bu-hint', html: '兼容 <a href="https://github.com/yujincheng08/BiliRoaming/wiki/%E5%85%AC%E5%85%B1%E8%A7%A3%E6%9E%90%E6%9C%8D%E5%8A%A1%E5%99%A8" target="_blank" rel="noopener" style="color:#7cc8ff">哔哩漫游公共解析服务器</a>。代理能看到你的授权令牌，只用信任的服务器。' }),
+            el('span', { class: 'bu-hint', style: 'margin-top:8px', html: '兼容 <a href="https://github.com/yujincheng08/BiliRoaming/wiki/%E5%85%AC%E5%85%B1%E8%A7%A3%E6%9E%90%E6%9C%8D%E5%8A%A1%E5%99%A8" target="_blank" rel="noopener" style="color:#7cc8ff">哔哩漫游公共解析服务器</a>。代理能看到你的授权令牌，只用信任的服务器。' }),
         )
     }
     renderServers()

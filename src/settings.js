@@ -21,7 +21,7 @@ function openSettings(layer, { onChange } = {}) {
     const sheet = el('div', { class: 'bu-sheet', role: 'dialog', 'aria-label': 'bili-unlock 设置' })
     modal.appendChild(sheet)
 
-    sheet.appendChild(el('header', {}, [
+    sheet.appendChild(el('div', { class: 'bu-head' }, [
         iconEl('gear'),
         el('h4', { text: 'bili-unlock 设置' }),
         el('button', { class: 'bu-iconbtn', title: '关闭 (Esc)', html: ICON.close, on: { click: close } }),
@@ -96,7 +96,7 @@ function openSettings(layer, { onChange } = {}) {
                 }),
                 el('button', { class: 'bu-btn sm ghost', text: '恢复默认', on: { click: () => { config.servers = DEFAULT_SERVERS; changed.servers = true; renderServers() } } }),
             ]),
-            el('span', { class: 'bu-hint', html: '兼容 <a href="https://github.com/yujincheng08/BiliRoaming/wiki/%E5%85%AC%E5%85%B1%E8%A7%A3%E6%9E%90%E6%9C%8D%E5%8A%A1%E5%99%A8" target="_blank" rel="noopener" style="color:#7cc8ff">哔哩漫游公共解析服务器</a>。代理能看到你的授权令牌，只用信任的服务器。' }),
+            el('span', { class: 'bu-hint', style: 'margin-top:8px', html: '兼容 <a href="https://github.com/yujincheng08/BiliRoaming/wiki/%E5%85%AC%E5%85%B1%E8%A7%A3%E6%9E%90%E6%9C%8D%E5%8A%A1%E5%99%A8" target="_blank" rel="noopener" style="color:#7cc8ff">哔哩漫游公共解析服务器</a>。代理能看到你的授权令牌，只用信任的服务器。' }),
         )
     }
     renderServers()
