@@ -65,6 +65,7 @@ function el(tag, attrs = {}, children = []) {
 }
 
 function showCard(layer, { title, text, error, buttons = [] }) {
+    log('card:', title)
     layer.replaceChildren(el('div', { class: 'bu-card' }, [
         el('h3', { text: title }),
         text ? el('p', { text }) : null,

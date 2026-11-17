@@ -4438,7 +4438,7 @@
 ;(function biliUnlock() {
 'use strict'
 const __BU_DEV__ = true
-const __BU_VERSION__ = '0.1.1-dev'
+const __BU_VERSION__ = '0.1.2-dev'
 
 // ===== src/md5.js =====
 // 精简版 MD5（RFC 1321），只用于 B站 TV 登录接口的签名。
@@ -4858,6 +4858,7 @@ function el(tag, attrs = {}, children = []) {
 }
 
 function showCard(layer, { title, text, error, buttons = [] }) {
+    log('card:', title)
     layer.replaceChildren(el('div', { class: 'bu-card' }, [
         el('h3', { text: title }),
         text ? el('p', { text }) : null,
@@ -4982,7 +4983,19 @@ async function boot() {
     let layer = null
     for (let i = 0; i < 40 && !(layer = createLayer()); i++) await new Promise(r => setTimeout(r, 250))
     if (!layer) return log('找不到播放器区域')
+    log('layer mounted in', layer.parentElement && (layer.parentElement.id || layer.parentElement.className))
     run(layer, info)
+
+    // B站 的 React 会重渲染播放器区域，把面板挤掉；被移除就挂回去（保留里面的状态）
+    let reattach = 0
+    setInterval(() => {
+        if (layer.isConnected && layer.offsetWidth > 0) return
+        const box = findPlayerBox()
+        if (!box) return
+        if (getComputedStyle(box).position === 'static') box.style.position = 'relative'
+        box.appendChild(layer)
+        if (++reattach <= 5) log('layer re-attached', reattach)
+    }, 400)
 
     // 番剧页切集是前端路由，页面数据不会更新；切集后整页刷新让服务端重新给数据
     const startPath = location.pathname
