@@ -2,7 +2,7 @@
 // @name         bili-unlock (dev loader)
 // @name:en      bili-unlock
 // @namespace    https://github.com/LucasYanzy/bili-unlock
-// @version      0.2.0
+// @version      1.0.0
 // @description  B站 海外看番：解除地区限制（通过代理）+ 播放加速
 // @description:en Watch region-locked Bilibili shows from abroad via a proxy, with smoother playback.
 // @author       LucasYanzy

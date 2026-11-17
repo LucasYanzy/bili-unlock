@@ -4438,7 +4438,7 @@
 ;(function biliUnlock() {
 'use strict'
 const __BU_DEV__ = true
-const __BU_VERSION__ = '0.2.0-dev'
+const __BU_VERSION__ = '1.0.0-dev'
 
 // ===== src/md5.js =====
 // 精简版 MD5（RFC 1321），只用于 B站 TV 登录接口的签名。

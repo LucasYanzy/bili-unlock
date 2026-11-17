@@ -2,7 +2,7 @@
 // @name         bili-unlock · B站解锁+加速
 // @name:en      bili-unlock
 // @namespace    https://github.com/LucasYanzy/bili-unlock
-// @version      0.2.0
+// @version      1.0.0
 // @description  B站 海外看番：解除地区限制（通过代理）+ 播放加速
 // @description:en Watch region-locked Bilibili shows from abroad via a proxy, with smoother playback.
 // @author       LucasYanzy
@@ -4458,7 +4458,7 @@
 ;(function biliUnlock() {
 'use strict'
 const __BU_DEV__ = false
-const __BU_VERSION__ = '0.2.0'
+const __BU_VERSION__ = '1.0.0'
 
 // ===== src/md5.js =====
 // 精简版 MD5（RFC 1321），只用于 B站 TV 登录接口的签名。
