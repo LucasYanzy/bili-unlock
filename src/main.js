@@ -52,7 +52,7 @@ async function run(layer, info) {
     try {
         if (result.dash) {
             currentPlayer = await playDash(video, result.dash)
-            const dashjs = window.dashjs
+            const dashjs = ownDashjs
             currentPlayer.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
                 const list = currentPlayer.getBitrateInfoListFor('video') || []
                 if (list.length > 1) {

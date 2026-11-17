@@ -3,13 +3,23 @@
 const DASHJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/dashjs/4.7.4/dash.all.min.js'
 const QN_NAME = { 127: '8K', 126: '杜比视界', 125: 'HDR', 120: '4K', 116: '1080P60', 112: '1080P+', 80: '1080P', 74: '720P60', 64: '720P', 32: '480P', 16: '360P' }
 
+// B站 页面自带一个精简版 window.dashjs（没有 Debug 等），不能直接用。
+// 加载我们自己的完整版，私下保存一份，再把 B站 的还原回去。
+let ownDashjs = null
 function loadDashJs() {
-    if (window.dashjs) return Promise.resolve(window.dashjs)
+    if (ownDashjs) return Promise.resolve(ownDashjs)
     return new Promise((resolve, reject) => {
+        const pageDashjs = window.dashjs
+        try { delete window.dashjs } catch (_) { window.dashjs = undefined }
+        const restore = () => { if (pageDashjs) window.dashjs = pageDashjs }
         const s = document.createElement('script')
         s.src = DASHJS_URL
-        s.onload = () => window.dashjs ? resolve(window.dashjs) : reject(new Error('dash.js 加载后未定义'))
-        s.onerror = () => reject(new Error('dash.js 加载失败'))
+        s.onload = () => {
+            const d = window.dashjs
+            restore()
+            if (d && d.MediaPlayer && d.Debug) { ownDashjs = d; resolve(d) } else reject(new Error('dash.js 加载后不完整'))
+        }
+        s.onerror = () => { restore(); reject(new Error('dash.js 加载失败（cdnjs 不可用？）')) }
         document.head.appendChild(s)
     })
 }
