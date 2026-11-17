@@ -36,7 +36,7 @@ const header = ({ name, extra = [] }) => [
     '',
 ].join('\n')
 
-const unlockFiles = ['src/md5.js', 'src/base.js', 'src/auth.js', 'src/unlock.js', 'src/player.js', 'src/ui.js', 'src/main.js']
+const unlockFiles = ['src/md5.js', 'src/base.js', 'src/auth.js', 'src/unlock.js', 'src/player.js', 'src/ui.js', 'src/settings.js', 'src/main.js']
 const unlockBody = dev => [
     ';(function biliUnlock() {',
     "'use strict'",

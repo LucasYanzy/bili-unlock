@@ -42,6 +42,13 @@ const config = {
     },
     set servers(v) { store.set('servers', v) },
     get quality() { return store.get('quality', 127) }, // 想要的最高画质 qn
+    set quality(v) { store.set('quality', v) },
+    get resume() { return store.get('resume', true) },
+    set resume(v) { store.set('resume', v) },
+    get autoplay() { return store.get('autoplay', true) },
+    set autoplay(v) { store.set('autoplay', v) },
+    get rate() { return store.get('rate', 1) },
+    set rate(v) { store.set('rate', v) },
 }
 
 function getCookie(name) {

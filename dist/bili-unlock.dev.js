@@ -4438,7 +4438,7 @@
 ;(function biliUnlock() {
 'use strict'
 const __BU_DEV__ = true
-const __BU_VERSION__ = '0.1.5-dev'
+const __BU_VERSION__ = '0.2.0-dev'
 
 // ===== src/md5.js =====
 // 精简版 MD5（RFC 1321），只用于 B站 TV 登录接口的签名。
@@ -4556,6 +4556,13 @@ const config = {
     },
     set servers(v) { store.set('servers', v) },
     get quality() { return store.get('quality', 127) }, // 想要的最高画质 qn
+    set quality(v) { store.set('quality', v) },
+    get resume() { return store.get('resume', true) },
+    set resume(v) { store.set('resume', v) },
+    get autoplay() { return store.get('autoplay', true) },
+    set autoplay(v) { store.set('autoplay', v) },
+    get rate() { return store.get('rate', 1) },
+    set rate(v) { store.set('rate', v) },
 }
 
 function getCookie(name) {
@@ -4591,7 +4598,7 @@ const auth = {
         return t
     },
     get accessKey() { return this.token ? this.token.access_key : '' },
-    clear() { store.del('auth') },
+    clear() { store.del('auth'); store.del('authorized_once') },
 
     async login() {
         if (!getCookie('DedeUserID')) throw new Error('请先登录 B站')
@@ -4626,6 +4633,7 @@ const auth = {
         }
         if (!token.access_key) throw new Error('令牌为空')
         store.set('auth', token)
+        store.set('authorized_once', true)
         log('auth: ok, expires', new Date(token.expires_at).toLocaleDateString())
         return token
     },
@@ -4672,34 +4680,72 @@ function guessAreas() {
     return ['cn', 'hk', 'tw']
 }
 
+const AREA_NAME = { cn: '大陆', hk: '香港', tw: '台湾', th: '东南亚' }
+
+// 代理/B站 常见错误码 → 人话
+function explainCode(code, message) {
+    const m = {
+        '-101': '未授权或授权已过期',
+        '401': '未授权或授权已过期',
+        '-10403': '该地区的服务器也看不了',
+        '-404': '服务器不支持这个接口，或地址填错了',
+        '-403': '没有权限（会员内容需要大会员，付费内容需要已购买）',
+        '-412': '请求被拦截，稍后再试',
+        '6002003': '该内容需要大会员',
+        '-3': '服务器校验失败',
+    }[String(code)]
+    return m ? `${m}（${code}${message ? ' ' + message : ''}）` : `${code} ${message || ''}`.trim()
+}
+
+function playurlUrl(server, info, area) {
+    const q = new URLSearchParams({
+        avid: info.aid || '', cid: info.cid || '', ep_id: info.epId,
+        qn: 127, fnver: 0, fnval: 4048, fourk: 1, area,
+    })
+    if (auth.accessKey) q.set('access_key', auth.accessKey)
+    return `${server.replace(/\/+$/, '')}/pgc/player/web/playurl?${q}`
+}
+
 async function requestPlayurl(info) {
-    const accessKey = auth.accessKey
     const errors = []
+    let needAuth = !auth.accessKey
     for (const server of config.servers) {
         for (const area of guessAreas()) {
-            const q = new URLSearchParams({
-                avid: info.aid || '', cid: info.cid || '', ep_id: info.epId,
-                qn: config.quality, fnver: 0, fnval: 4048, fourk: 1, area,
-            })
-            if (accessKey) q.set('access_key', accessKey)
-            const url = `${server.replace(/\/+$/, '')}/pgc/player/web/playurl?${q}`
             try {
-                const j = await fetchJSON(url, { credentials: 'omit' })
+                const j = await fetchJSON(playurlUrl(server, info, area), { credentials: 'omit' })
                 const result = j.result || j.data
                 log('playurl', server, area, 'code=' + j.code, j.message || '', result && result.dash ? 'dash' : (result && result.durl ? 'durl' : ''))
                 if (j.code === 0 && result && (result.dash || result.durl)) return { result, server, area }
-                errors.push(`${server} [${area}] ${j.code} ${j.message || ''}`)
-                if (j.code === -101 || j.code === 401) break // 未授权，换地区也没用
+                errors.push(`${server} · ${AREA_NAME[area] || area}：${explainCode(j.code, j.message)}`)
+                if (j.code === -101 || j.code === 401) { needAuth = true; break } // 未授权，换地区也没用
+                if (j.code === -404 || j.code === -3) break                       // 这台服务器不行，换下一台
             } catch (e) {
                 log('playurl error', server, area, e.message)
-                errors.push(`${server} [${area}] ${e.message}`)
+                errors.push(`${server}：连不上（${e.message}）`)
                 break
             }
         }
     }
     const err = new Error(errors.join('\n') || '没有可用的代理服务器')
-    err.needAuth = !accessKey || errors.some(e => / (-101|401) /.test(e))
+    err.needAuth = needAuth
     throw err
+}
+
+// 设置面板里的“测试”：只测当前视频在这台服务器上能不能拿到地址
+async function probeServer(server, info) {
+    const t0 = performance.now()
+    for (const area of guessAreas()) {
+        try {
+            const j = await fetchJSON(playurlUrl(server, info, area), { credentials: 'omit' })
+            const ms = Math.round(performance.now() - t0)
+            const r = j.result || j.data
+            if (j.code === 0 && r && (r.dash || r.durl)) return { ok: true, text: `可用 · ${AREA_NAME[area]} · ${ms}ms` }
+            if (j.code === -101 || j.code === 401 || j.code === -404) return { ok: false, text: explainCode(j.code).split('（')[0], title: explainCode(j.code, j.message) }
+        } catch (e) {
+            return { ok: false, text: '连不上', title: e.message }
+        }
+    }
+    return { ok: false, text: '各地区都不行' }
 }
 
 
@@ -4708,7 +4754,7 @@ async function requestPlayurl(info) {
 
 // 纯播放器版本：不带 DRM/EME 模块（用不上，而且 Safari 上 EME 检测会出错）
 const DASHJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/dashjs/4.7.4/dash.mediaplayer.min.js'
-const QN_NAME = { 127: '8K', 126: '杜比视界', 125: 'HDR', 120: '4K', 116: '1080P60', 112: '1080P+', 80: '1080P', 74: '720P60', 64: '720P', 32: '480P', 16: '360P' }
+const QN_NAME = { 127: '8K', 126: '杜比视界', 125: 'HDR', 120: '4K', 116: '1080P60', 112: '1080P+', 80: '1080P', 74: '720P60', 64: '720P', 32: '480P', 16: '360P', 6: '240P' }
 
 // B站 页面自带一个精简版 window.dashjs（没有 Debug 等）。dash.js 内部组件会通过
 // window.dashjs 互相查找，两套混用会出错。被限制的页面上 B站 自己的播放器不工作，
@@ -4743,30 +4789,44 @@ function segBase(item) {
     }
 }
 
-// Safari 对 HEVC/AV1 的 MSE 支持不稳定，优先 AVC
-function chooseVideoTracks(videos) {
-    const supported = videos.filter(v => {
-        const mime = `${pick(v, 'mimeType', 'mime_type') || 'video/mp4'}; codecs="${v.codecs}"`
-        return window.MediaSource && MediaSource.isTypeSupported(mime)
-    })
-    const avc = supported.filter(v => /^avc/.test(v.codecs))
-    const list = avc.length ? avc : supported
-    return list.length ? list : videos
+// 主地址 + 备用地址；加速脚本在的话先让它换成更快的线路
+function mediaUrls(item) {
+    const urls = [pick(item, 'baseUrl', 'base_url')].concat(pick(item, 'backupUrl', 'backup_url') || []).filter(Boolean)
+    const out = []
+    for (const u of urls) {
+        let v = u
+        try { if (window.BiliAccelerator && window.BiliAccelerator.rewriteUrl) v = window.BiliAccelerator.rewriteUrl(u) || u } catch (_) { }
+        if (!out.includes(v)) out.push(v)
+        if (!out.includes(u)) out.push(u)
+    }
+    return out.slice(0, 4)
 }
 
-function buildMpd(dash) {
+// Safari 对 HEVC/AV1 的 MSE 支持不稳定，优先 AVC；同一画质只留一条
+function chooseVideoTracks(videos) {
+    const canPlay = v => !window.MediaSource || MediaSource.isTypeSupported(`${pick(v, 'mimeType', 'mime_type') || 'video/mp4'}; codecs="${v.codecs}"`)
+    const supported = videos.filter(canPlay)
+    const pool = supported.length ? supported : videos
+    const rank = v => /^avc/.test(v.codecs) ? 0 : /^(hev|hvc)/.test(v.codecs) ? 1 : 2
+    const byQn = new Map()
+    for (const v of pool) {
+        const cur = byQn.get(v.id)
+        if (!cur || rank(v) < rank(cur)) byQn.set(v.id, v)
+    }
+    return [...byQn.values()].sort((a, b) => a.bandwidth - b.bandwidth)
+}
+
+function buildMpd(dash, videos = chooseVideoTracks(dash.video || [])) {
     const duration = dash.duration || dash.timelength / 1000 || 0
     const rep = (item, kind) => {
         const { init, index } = segBase(item)
-        const url = pick(item, 'baseUrl', 'base_url')
         const attrs = kind === 'video'
             ? `width="${item.width}" height="${item.height}" frameRate="${pick(item, 'frameRate', 'frame_rate') || ''}"`
             : `audioSamplingRate="44100"`
         return `<Representation id="${kind}-${item.id}-${item.codecid || ''}" bandwidth="${item.bandwidth}" codecs="${xmlEsc(item.codecs)}" mimeType="${pick(item, 'mimeType', 'mime_type')}" ${attrs}>` +
-            `<BaseURL>${xmlEsc(url)}</BaseURL>` +
+            mediaUrls(item).map(u => `<BaseURL>${xmlEsc(u)}</BaseURL>`).join('') +
             `<SegmentBase indexRange="${index}"><Initialization range="${init}"/></SegmentBase></Representation>`
     }
-    const videos = chooseVideoTracks(dash.video || [])
     const audios = [].concat(dash.audio || [], (dash.flac && dash.flac.audio) ? [dash.flac.audio] : [])
         .filter(a => a && /mp4a/.test(a.codecs))
     return `<?xml version="1.0" encoding="UTF-8"?>` +
@@ -4777,21 +4837,27 @@ function buildMpd(dash) {
         `</Period></MPD>`
 }
 
-async function playDash(video, dash) {
+// 返回 { player, tracks }，tracks 与 dash.js 的画质下标一一对应（都按码率升序）
+async function playDash(video, dash, preferQn) {
     const dashjs = await loadDashJs()
-    const mpd = buildMpd(dash)
+    const tracks = chooseVideoTracks(dash.video || [])
+    const mpd = buildMpd(dash, tracks)
     const url = URL.createObjectURL(new Blob([mpd], { type: 'application/dash+xml' }))
+    let start = tracks.length - 1
+    for (let i = tracks.length - 1; i >= 0; i--) { if (tracks[i].id <= preferQn) { start = i; break } }
     const player = dashjs.MediaPlayer().create()
     player.updateSettings({
         streaming: {
-            abr: { autoSwitchBitrate: { video: false }, initialBitrate: { video: 1e9 } },
-            buffer: { fastSwitchEnabled: true },
+            abr: { autoSwitchBitrate: { video: false, audio: true }, initialBitrate: { video: (tracks[start] ? tracks[start].bandwidth / 1000 : 1e9) } },
+            buffer: { fastSwitchEnabled: true, bufferTimeAtTopQuality: 30, stableBufferTime: 20 },
+            retryAttempts: { MediaSegment: 4, InitializationSegment: 4, IndexSegment: 4 },
         },
         debug: { logLevel: dashjs.Debug.LOG_LEVEL_WARNING },
     })
     player.on(dashjs.MediaPlayer.events.ERROR, e => log('dash error', e && e.error && (e.error.message || e.error.code)))
+    player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => { try { player.setQualityFor('video', start, true) } catch (_) { } })
     player.initialize(video, url, false)
-    return player
+    return { player, tracks, start }
 }
 
 // 有些代理只给 durl（mp4 单文件）
@@ -4799,28 +4865,95 @@ function playDurl(video, result) {
     const seg = result.durl && result.durl[0]
     if (!seg) throw new Error('没有可播放的地址')
     video.src = seg.url
-    return null
+    return { player: null, tracks: [], start: 0 }
 }
 
 
 // ===== src/ui.js =====
-// ---- 盖在原播放器上的解锁面板 ----
+// ---- 界面：盖在播放器上的面板、操作栏、设置 ----
+
+const ICON = {
+    lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg>',
+    globe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg>',
+    gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
+    bolt: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>',
+    expand: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>',
+    close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+    up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 15 6-6 6 6"/></svg>',
+    down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>',
+}
 
 const CSS = `
 #big-block-panel{display:none!important}
-.bu-layer{position:absolute;inset:0;z-index:1000;background:#000;display:flex;align-items:center;justify-content:center;font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;color:#e8e8e8}
-.bu-layer video{position:absolute;inset:0;width:100%;height:100%;background:#000}
-.bu-card{position:relative;max-width:440px;padding:22px 24px;text-align:center}
-.bu-card h3{margin:0 0 8px;font-size:17px;font-weight:600;color:#fff}
-.bu-card p{margin:0 0 14px;color:#b8b8b8;font-size:13px;white-space:pre-wrap;word-break:break-word}
-.bu-card pre{margin:0 0 14px;max-height:120px;overflow:auto;text-align:left;font:11px/1.4 Menlo,monospace;color:#ff9b9b;white-space:pre-wrap}
-.bu-btn{display:inline-block;margin:4px;padding:7px 16px;border:0;border-radius:6px;background:#00aeec;color:#fff;font-size:13px;cursor:pointer}
-.bu-btn.ghost{background:transparent;border:1px solid #555;color:#ccc}
-.bu-bar{position:absolute;top:8px;right:8px;z-index:2;display:flex;gap:6px;align-items:center;opacity:.15;transition:opacity .2s}
-.bu-layer:hover .bu-bar{opacity:1}
-.bu-bar span,.bu-bar select,.bu-bar button{font:12px/1 -apple-system,sans-serif;color:#fff;background:rgba(0,0,0,.6);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:5px 7px}
-.bu-bar button{cursor:pointer}
+.bu-layer{--bu-accent:#00aeec;--bu-accent2:#fb7299;position:absolute;inset:0;z-index:1000;background:#0b0d10;color:#e9edf1;font:14px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;overflow:hidden;user-select:none;-webkit-user-select:none}
+.bu-layer *{box-sizing:border-box}
+.bu-layer.bu-webfs{position:fixed;z-index:2147483000}
+.bu-layer video{position:absolute;inset:0;width:100%;height:100%;background:#000;outline:none}
+.bu-layer svg{width:16px;height:16px;display:block;flex:none}
+.bu-center{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;background:radial-gradient(120% 90% at 50% 0%,#1a2230 0%,#0b0d10 60%)}
+.bu-card{width:min(440px,100%);text-align:center}
+.bu-card .bu-ico{width:52px;height:52px;margin:0 auto 14px;border-radius:16px;display:grid;place-items:center;color:#fff;background:linear-gradient(135deg,var(--bu-accent),#5b8cff);box-shadow:0 10px 30px rgba(0,174,236,.35)}
+.bu-card .bu-ico svg{width:26px;height:26px}
+.bu-card h3{margin:0 0 8px;font-size:18px;font-weight:650;color:#fff;letter-spacing:.2px}
+.bu-card p{margin:0 0 18px;color:#9aa6b2;font-size:13px;white-space:pre-wrap}
+.bu-card pre{margin:0 0 16px;max-height:110px;overflow:auto;text-align:left;font:11px/1.45 ui-monospace,Menlo,monospace;color:#ffb4b4;background:rgba(255,80,80,.08);border:1px solid rgba(255,80,80,.18);border-radius:8px;padding:8px 10px;white-space:pre-wrap;user-select:text;-webkit-user-select:text}
+.bu-card .bu-foot{margin-top:18px;font-size:11px;color:#5d6873}
+.bu-card .bu-foot a{color:#7c8b99;text-decoration:none}
+.bu-spin{width:30px;height:30px;margin:0 auto 16px;border-radius:50%;border:3px solid rgba(255,255,255,.12);border-top-color:var(--bu-accent);animation:bu-rot .8s linear infinite}
+@keyframes bu-rot{to{transform:rotate(360deg)}}
+.bu-btn{display:inline-flex;align-items:center;gap:6px;margin:4px;padding:8px 18px;border:0;border-radius:9px;background:var(--bu-accent);color:#fff;font:600 13px/1 inherit;cursor:pointer;transition:filter .15s,transform .1s}
+.bu-btn:hover{filter:brightness(1.1)}.bu-btn:active{transform:scale(.97)}
+.bu-btn.ghost{background:rgba(255,255,255,.07);color:#cfd6dd;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
+.bu-btn.danger{background:rgba(255,90,90,.12);color:#ff9b9b;box-shadow:inset 0 0 0 1px rgba(255,90,90,.25)}
+.bu-btn.sm{padding:6px 11px;font-size:12px;border-radius:7px;margin:0}
+.bu-top{position:absolute;left:0;right:0;top:0;z-index:3;display:flex;align-items:center;gap:8px;padding:10px 12px 26px;background:linear-gradient(rgba(0,0,0,.7),rgba(0,0,0,0));transition:opacity .25s}
+.bu-layer.bu-idle .bu-top{opacity:0;pointer-events:none}
+.bu-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;background:rgba(0,174,236,.18);color:#bfefff;font-size:12px;font-weight:600;box-shadow:inset 0 0 0 1px rgba(0,174,236,.35)}
+.bu-sub{font-size:12px;color:#aab4be;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bu-grow{flex:1;min-width:0}
+.bu-chip{position:relative;display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 10px;border:0;border-radius:8px;background:rgba(255,255,255,.1);color:#fff;font:600 12px/1 inherit;cursor:pointer;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.bu-chip:hover{background:rgba(255,255,255,.18)}
+.bu-chip.icon{width:30px;padding:0;justify-content:center}
+.bu-chip.on{color:#ffe08a}
+.bu-menu{position:absolute;top:36px;right:0;min-width:132px;padding:6px;border-radius:10px;background:rgba(22,26,32,.96);box-shadow:0 12px 40px rgba(0,0,0,.5),inset 0 0 0 1px rgba(255,255,255,.08);display:none;z-index:5}
+.bu-menu.open{display:block}
+.bu-menu button{display:flex;width:100%;justify-content:space-between;gap:12px;padding:7px 10px;border:0;border-radius:7px;background:none;color:#dfe5ea;font:13px/1.2 inherit;cursor:pointer;text-align:left}
+.bu-menu button:hover{background:rgba(255,255,255,.08)}
+.bu-menu button.cur{color:var(--bu-accent);font-weight:650}
+.bu-menu small{color:#7d8893;font-size:11px}
+.bu-toast{position:absolute;left:50%;top:18%;z-index:4;transform:translate(-50%,-6px);padding:8px 14px;border-radius:10px;background:rgba(0,0,0,.72);color:#fff;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s}
+.bu-toast.show{opacity:1;transform:translate(-50%,0)}
+.bu-modal{position:absolute;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(5,7,10,.62);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.bu-sheet{width:min(560px,100%);max-height:100%;overflow:auto;border-radius:16px;background:#151a20;box-shadow:0 24px 80px rgba(0,0,0,.6),inset 0 0 0 1px rgba(255,255,255,.07);user-select:text;-webkit-user-select:text}
+.bu-sheet header{position:sticky;top:0;display:flex;align-items:center;gap:10px;padding:14px 16px;background:#151a20;border-bottom:1px solid rgba(255,255,255,.06);z-index:1}
+.bu-sheet header h4{margin:0;flex:1;font-size:15px;color:#fff}
+.bu-sec{padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.05)}
+.bu-sec:last-child{border-bottom:0}
+.bu-sec h5{margin:0 0 10px;font-size:12px;font-weight:650;letter-spacing:.6px;color:#7d8893;text-transform:uppercase}
+.bu-row{display:flex;align-items:center;gap:8px;margin:6px 0}
+.bu-row .bu-grow{font-size:13px;color:#dfe5ea}
+.bu-row .bu-hint{display:block;font-size:11.5px;color:#7d8893}
+.bu-srv{display:flex;align-items:center;gap:6px;padding:7px 8px;margin:4px 0;border-radius:9px;background:rgba(255,255,255,.04)}
+.bu-srv code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px ui-monospace,Menlo,monospace;color:#dfe5ea}
+.bu-pill{font-size:11px;padding:2px 7px;border-radius:999px;background:rgba(255,255,255,.08);color:#9aa6b2;white-space:nowrap}
+.bu-pill.ok{background:rgba(46,204,113,.15);color:#7ee2a8}.bu-pill.bad{background:rgba(255,90,90,.14);color:#ff9b9b}
+.bu-iconbtn{display:grid;place-items:center;width:26px;height:26px;border:0;border-radius:7px;background:none;color:#9aa6b2;cursor:pointer}
+.bu-iconbtn:hover{background:rgba(255,255,255,.08);color:#fff}
+.bu-input,.bu-select{height:32px;padding:0 10px;border:0;border-radius:8px;background:rgba(255,255,255,.07);color:#fff;font:13px inherit;outline:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.1)}
+.bu-input{flex:1;min-width:0}.bu-input:focus,.bu-select:focus{box-shadow:inset 0 0 0 1px var(--bu-accent)}
+.bu-switch{position:relative;width:38px;height:22px;flex:none;border-radius:999px;background:rgba(255,255,255,.16);cursor:pointer;transition:background .2s;border:0}
+.bu-switch:after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .2s}
+.bu-switch.on{background:var(--bu-accent)}.bu-switch.on:after{transform:translateX(16px)}
+.bu-kbd{display:inline-block;min-width:20px;padding:1px 5px;margin:0 2px;border-radius:4px;background:rgba(255,255,255,.1);font:11px ui-monospace,Menlo,monospace;text-align:center;color:#cfd6dd}
 `
+
+function ensureStyle() {
+    if (document.getElementById('bu-style')) return
+    const st = document.createElement('style')
+    st.id = 'bu-style'
+    st.textContent = CSS
+    ;(document.head || document.documentElement).appendChild(st)
+}
 
 function findPlayerBox() {
     // 2026 版番剧页：#bilibili-player-wrap > … > #bilibili-player > #big-block-panel(z=100, 阻断提示)
@@ -4832,21 +4965,16 @@ function findPlayerBox() {
     let n
     while ((n = walker.nextNode())) {
         if (/无法观看|無法觀看/.test(n.nodeValue)) {
-            let el = n.parentElement
-            while (el && el !== document.body && !(el.offsetWidth >= 480 && el.offsetHeight >= 260)) el = el.parentElement
-            if (el && el !== document.body) return el
+            let e = n.parentElement
+            while (e && e !== document.body && !(e.offsetWidth >= 480 && e.offsetHeight >= 260)) e = e.parentElement
+            if (e && e !== document.body) return e
         }
     }
     return null
 }
 
 function createLayer() {
-    if (!document.getElementById('bu-style')) {
-        const st = document.createElement('style')
-        st.id = 'bu-style'
-        st.textContent = CSS
-        document.head.appendChild(st)
-    }
+    ensureStyle()
     const box = findPlayerBox()
     if (!box) return null
     if (getComputedStyle(box).position === 'static') box.style.position = 'relative'
@@ -4854,125 +4982,446 @@ function createLayer() {
     if (!layer) {
         layer = document.createElement('div')
         layer.className = 'bu-layer'
+        layer.tabIndex = -1
         box.appendChild(layer)
     }
     return layer
 }
 
+// 小型 DOM 构造器
 function el(tag, attrs = {}, children = []) {
     const e = document.createElement(tag)
     for (const [k, v] of Object.entries(attrs)) {
+        if (v == null || v === false) continue
         if (k === 'on') for (const [ev, fn] of Object.entries(v)) e.addEventListener(ev, fn)
         else if (k === 'text') e.textContent = v
-        else e.setAttribute(k, v)
+        else if (k === 'html') e.innerHTML = v // 只用于内置的 SVG 图标
+        else if (k === 'class') e.className = v
+        else e.setAttribute(k, v === true ? '' : v)
     }
-    for (const c of [].concat(children)) if (c) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c)
+    for (const c of [].concat(children)) if (c != null && c !== false) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c)
     return e
 }
+const iconEl = (name, cls = '') => el('span', { class: cls, html: ICON[name] })
 
-function showCard(layer, { title, text, error, buttons = [] }) {
+const FOOT = () => el('div', { class: 'bu-foot' }, [
+    `bili-unlock ${__BU_VERSION__} · `,
+    el('a', { href: 'https://github.com/LucasYanzy/bili-unlock', target: '_blank', rel: 'noopener', text: 'GitHub' }),
+])
+
+// 播放前的各种状态卡片
+function showCard(layer, { title, text, error, buttons = [], icon = 'lock', loading = false }) {
     log('card:', title)
-    layer.replaceChildren(el('div', { class: 'bu-card' }, [
+    layer.replaceChildren(el('div', { class: 'bu-center' }, el('div', { class: 'bu-card' }, [
+        loading ? el('div', { class: 'bu-spin' }) : el('div', { class: 'bu-ico', html: ICON[icon] }),
         el('h3', { text: title }),
         text ? el('p', { text }) : null,
         error ? el('pre', { text: error }) : null,
-        el('div', {}, buttons.map(b => el('button', { class: 'bu-btn' + (b.ghost ? ' ghost' : ''), text: b.label, on: { click: b.onClick } }))),
-    ]))
+        buttons.length ? el('div', {}, buttons.map(b => el('button', { class: 'bu-btn' + (b.kind ? ' ' + b.kind : ''), text: b.label, on: { click: b.onClick } }))) : null,
+        FOOT(),
+    ])))
 }
 
-function editServers() {
-    const cur = config.servers.join('\n')
-    const v = prompt('代理服务器地址（每行一个，按顺序尝试）。\n代理会看到你的授权令牌，只用你信任的服务器。', cur)
-    if (v == null) return false
-    const list = v.split(/[\s,]+/).map(s => s.trim()).filter(s => /^https?:\/\/[^/\s]+/.test(s)).map(s => s.replace(/\/+$/, ''))
-    config.servers = list.length ? list : DEFAULT_SERVERS
-    return true
+function toast(layer, msg, ms = 1400) {
+    let t = layer.querySelector('.bu-toast')
+    if (!t) { t = el('div', { class: 'bu-toast' }); layer.appendChild(t) }
+    t.textContent = msg
+    t.classList.add('show')
+    clearTimeout(t._h)
+    t._h = setTimeout(() => t.classList.remove('show'), ms)
+}
+
+// 下拉菜单：chip 按钮 + 选项列表
+function dropdown(label, items, onPick, title) {
+    const menu = el('div', { class: 'bu-menu' })
+    const chip = el('button', { class: 'bu-chip', title, text: label })
+    const wrap = el('div', { style: 'position:relative' }, [chip, menu])
+    const render = (cur) => {
+        menu.replaceChildren(...items().map(it => el('button', {
+            class: it.value === cur ? 'cur' : '',
+            on: { click: (e) => { e.stopPropagation(); menu.classList.remove('open'); onPick(it.value) } },
+        }, [it.label, it.hint ? el('small', { text: it.hint }) : null])))
+    }
+    chip.addEventListener('click', (e) => {
+        e.stopPropagation()
+        const open = !menu.classList.contains('open')
+        wrap.closest('.bu-layer').querySelectorAll('.bu-menu.open').forEach(m => m.classList.remove('open'))
+        if (open) { render(wrap._cur); menu.classList.add('open') }
+    })
+    return { wrap, set(text, cur) { chip.textContent = text; wrap._cur = cur } }
+}
+
+function switchEl(on, onChange) {
+    const s = el('button', { class: 'bu-switch' + (on ? ' on' : ''), role: 'switch', 'aria-checked': String(!!on) })
+    s.addEventListener('click', () => { const v = !s.classList.contains('on'); s.classList.toggle('on', v); s.setAttribute('aria-checked', String(v)); onChange(v) })
+    return s
+}
+
+// 打开内置加速脚本的面板（它的按钮在 shadow DOM 里）
+function openAcceleratorPanel() {
+    const host = document.getElementById('bili-accelerator-button')
+    const btn = host && host.shadowRoot && host.shadowRoot.querySelector('.ba-toggle')
+    if (btn) { btn.click(); return true }
+    return false
+}
+function acceleratorMode() {
+    try { return window.BiliAccelerator ? window.BiliAccelerator.getConfig().mode : null } catch (_) { return null }
+}
+const ACCEL_MODE_NAME = { 'bad-only': '卡顿时加速', force: '始终加速', off: '已关闭' }
+
+
+// ===== src/settings.js =====
+// ---- 设置面板 ----
+
+const QUALITY_PREFS = [
+    { value: 127, label: '最高可用' },
+    { value: 120, label: '4K' },
+    { value: 112, label: '1080P 高码率' },
+    { value: 80, label: '1080P' },
+    { value: 64, label: '720P' },
+    { value: 32, label: '480P（省流量）' },
+]
+
+function openSettings(layer, { onChange } = {}) {
+    layer.querySelector('.bu-modal')?.remove()
+    const changed = { servers: false, auth: false }
+    const close = () => {
+        modal.remove()
+        layer.focus()
+        if (onChange && (changed.servers || changed.auth)) onChange(changed)
+    }
+    const modal = el('div', { class: 'bu-modal', on: { click: (e) => { if (e.target === modal) close() } } })
+    const sheet = el('div', { class: 'bu-sheet', role: 'dialog', 'aria-label': 'bili-unlock 设置' })
+    modal.appendChild(sheet)
+
+    sheet.appendChild(el('header', {}, [
+        iconEl('gear'),
+        el('h4', { text: 'bili-unlock 设置' }),
+        el('button', { class: 'bu-iconbtn', title: '关闭 (Esc)', html: ICON.close, on: { click: close } }),
+    ]))
+
+    // 授权
+    const authSec = el('div', { class: 'bu-sec' })
+    const renderAuth = () => {
+        const t = auth.token
+        authSec.replaceChildren(
+            el('h5', { text: '账号授权' }),
+            el('div', { class: 'bu-row' }, [
+                el('div', { class: 'bu-grow' }, [
+                    t ? `已授权 · 有效期至 ${new Date(t.expires_at).toLocaleDateString()}` : '未授权',
+                    el('span', { class: 'bu-hint', text: '令牌只保存在本浏览器，只发给你设置的代理服务器。' }),
+                ]),
+                el('button', {
+                    class: 'bu-btn sm', text: t ? '重新授权' : '授权', on: {
+                        click: async (e) => {
+                            e.target.disabled = true; e.target.textContent = '授权中…'
+                            try { await auth.login(); changed.auth = true } catch (err) { alert('授权失败：' + redact(err.message)) }
+                            renderAuth()
+                        }
+                    }
+                }),
+                t ? el('button', { class: 'bu-btn sm danger', text: '退出', on: { click: () => { auth.clear(); changed.auth = true; renderAuth() } } }) : null,
+            ]),
+        )
+    }
+    renderAuth()
+    sheet.appendChild(authSec)
+
+    // 代理服务器
+    const srvSec = el('div', { class: 'bu-sec' })
+    const status = {}
+    const renderServers = () => {
+        const list = config.servers
+        const input = el('input', { class: 'bu-input', placeholder: 'https://example.com', spellcheck: 'false' })
+        const add = () => {
+            const v = input.value.trim().replace(/\/+$/, '')
+            if (!/^https?:\/\/[^/\s]+$/.test(v)) { input.focus(); input.style.boxShadow = 'inset 0 0 0 1px #ff6b6b'; return }
+            if (!list.includes(v)) { config.servers = list.concat(v); changed.servers = true }
+            renderServers()
+        }
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); e.stopPropagation() })
+        const move = (i, d) => { const l = list.slice(); const [x] = l.splice(i, 1); l.splice(i + d, 0, x); config.servers = l; changed.servers = true; renderServers() }
+        srvSec.replaceChildren(
+            el('h5', { text: '代理服务器（按顺序尝试）' }),
+            ...list.map((s, i) => el('div', { class: 'bu-srv' }, [
+                el('code', { text: s, title: s }),
+                status[s] ? el('span', { class: 'bu-pill ' + (status[s].ok ? 'ok' : 'bad'), text: status[s].text, title: status[s].title || '' }) : null,
+                el('button', { class: 'bu-iconbtn', title: '上移', html: ICON.up, disabled: i === 0, on: { click: () => move(i, -1) } }),
+                el('button', { class: 'bu-iconbtn', title: '下移', html: ICON.down, disabled: i === list.length - 1, on: { click: () => move(i, 1) } }),
+                el('button', {
+                    class: 'bu-iconbtn', title: '删除', html: ICON.close, on: {
+                        click: () => { config.servers = list.filter(x => x !== s); changed.servers = true; renderServers() }
+                    }
+                }),
+            ])),
+            el('div', { class: 'bu-row' }, [input, el('button', { class: 'bu-btn sm', text: '添加', on: { click: add } })]),
+            el('div', { class: 'bu-row' }, [
+                el('button', {
+                    class: 'bu-btn sm ghost', text: '测试当前视频', on: {
+                        click: async (e) => {
+                            const info = readPlayInfo()
+                            if (!info || !info.epId) { alert('请在番剧/影视播放页使用'); return }
+                            e.target.disabled = true; e.target.textContent = '测试中…'
+                            for (const s of config.servers) { status[s] = { text: '…' }; renderServers() ; status[s] = await probeServer(s, info) }
+                            renderServers()
+                        }
+                    }
+                }),
+                el('button', { class: 'bu-btn sm ghost', text: '恢复默认', on: { click: () => { config.servers = DEFAULT_SERVERS; changed.servers = true; renderServers() } } }),
+            ]),
+            el('span', { class: 'bu-hint', html: '兼容 <a href="https://github.com/yujincheng08/BiliRoaming/wiki/%E5%85%AC%E5%85%B1%E8%A7%A3%E6%9E%90%E6%9C%8D%E5%8A%A1%E5%99%A8" target="_blank" rel="noopener" style="color:#7cc8ff">哔哩漫游公共解析服务器</a>。代理能看到你的授权令牌，只用信任的服务器。' }),
+        )
+    }
+    renderServers()
+    sheet.appendChild(srvSec)
+
+    // 播放
+    const qSel = el('select', { class: 'bu-select' }, QUALITY_PREFS.map(q => el('option', { value: String(q.value), text: q.label })))
+    qSel.value = String(config.quality)
+    qSel.addEventListener('change', () => { config.quality = Number(qSel.value) })
+    sheet.appendChild(el('div', { class: 'bu-sec' }, [
+        el('h5', { text: '播放' }),
+        el('div', { class: 'bu-row' }, [el('div', { class: 'bu-grow', text: '默认画质' }), qSel]),
+        el('div', { class: 'bu-row' }, [el('div', { class: 'bu-grow' }, ['记住播放进度', el('span', { class: 'bu-hint', text: '下次打开同一集从上次的位置继续' })]), switchEl(config.resume, v => { config.resume = v })]),
+        el('div', { class: 'bu-row' }, [el('div', { class: 'bu-grow' }, ['自动播放', el('span', { class: 'bu-hint', text: '解锁成功后立即开始播放' })]), switchEl(config.autoplay, v => { config.autoplay = v })]),
+        el('div', { class: 'bu-row' }, [el('div', { class: 'bu-grow' }, ['快捷键', el('span', { class: 'bu-hint', html: '<span class="bu-kbd">空格</span>播放/暂停 <span class="bu-kbd">←</span><span class="bu-kbd">→</span>快退/快进 5 秒 <span class="bu-kbd">↑</span><span class="bu-kbd">↓</span>音量 <span class="bu-kbd">F</span>全屏 <span class="bu-kbd">M</span>静音 <span class="bu-kbd">[</span><span class="bu-kbd">]</span>倍速' })])]),
+    ]))
+
+    // 加速
+    const mode = acceleratorMode()
+    sheet.appendChild(el('div', { class: 'bu-sec' }, [
+        el('h5', { text: '播放加速' }),
+        el('div', { class: 'bu-row' }, [
+            el('div', { class: 'bu-grow' }, [
+                mode ? `内置加速：${ACCEL_MODE_NAME[mode] || mode}` : '内置加速未运行',
+                el('span', { class: 'bu-hint', text: '自动为卡顿的视频换更快的 CDN 线路，解锁后的视频同样有效。基于 realzza/bilibili-accelerator。' }),
+            ]),
+            el('button', { class: 'bu-btn sm ghost', text: '打开加速面板', on: { click: () => { close(); if (!openAcceleratorPanel()) alert('没找到加速面板（页面右下角的 ⚡）') } } }),
+        ]),
+    ]))
+
+    sheet.appendChild(el('div', { class: 'bu-sec' }, [
+        el('div', { class: 'bu-row' }, [
+            el('div', { class: 'bu-grow' }, [`bili-unlock ${__BU_VERSION__}`, el('span', { class: 'bu-hint', text: 'MIT 开源 · 遇到问题欢迎反馈' })]),
+            el('a', { class: 'bu-btn sm ghost', href: 'https://github.com/LucasYanzy/bili-unlock', target: '_blank', rel: 'noopener', text: 'GitHub ★' }),
+            el('a', { class: 'bu-btn sm ghost', href: 'https://github.com/LucasYanzy/bili-unlock/issues/new', target: '_blank', rel: 'noopener', text: '反馈' }),
+        ]),
+    ]))
+
+    modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); e.stopPropagation() })
+    layer.appendChild(modal)
+    sheet.tabIndex = -1
+    sheet.focus()
 }
 
 
 // ===== src/main.js =====
-// ---- 入口 ----
+// ---- 入口：状态流转 + 播放器操作栏 ----
 
 const isBangumiPage = () => location.hostname === 'www.bilibili.com' && /\/bangumi\/play\/(ep|ss)\d+/.test(location.pathname)
+const RATES = [0.5, 0.75, 1, 1.25, 1.5, 2, 3]
+const fmtTime = s => { s = Math.floor(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(ss).padStart(2, '0') }
 
-let currentPlayer = null
+let current = null // { player, video, timers }
 
-async function run(layer, info) {
-    if (currentPlayer) { try { currentPlayer.reset() } catch (_) { } currentPlayer = null }
+function teardown() {
+    if (!current) return
+    try { current.player && current.player.reset() } catch (_) { }
+    current.timers.forEach(clearInterval)
+    current.cleanup.forEach(fn => { try { fn() } catch (_) { } })
+    current = null
+}
+
+function settingsAction(layer, info) {
+    return () => openSettings(layer, { onChange: () => run(layer, info) })
+}
+
+async function run(layer, info, { retriedAuth = false } = {}) {
+    teardown()
+    const openSet = settingsAction(layer, info)
 
     if (!getCookie('DedeUserID')) {
         return showCard(layer, {
             title: '需要先登录 B站',
-            text: '解锁需要用你的账号向代理请求播放地址。登录后刷新本页。',
-            buttons: [{ label: '去登录', onClick: () => { location.href = 'https://passport.bilibili.com/login?gourl=' + encodeURIComponent(location.href) } }],
-        })
-    }
-    if (!auth.accessKey) {
-        return showCard(layer, {
-            title: '这部内容有地区限制',
-            text: `bili-unlock 可以通过代理服务器播放它。\n\n第一次使用需要授权：用你当前登录的账号生成一个令牌，存在本浏览器里，只在请求代理时发送。\n代理：${config.servers.join('、')}`,
+            text: '解锁会用你的账号向代理请求播放地址。\n登录后刷新本页即可。',
             buttons: [
-                { label: '授权并播放', onClick: () => doAuth(layer, info) },
-                { label: '更换代理', ghost: true, onClick: () => { if (editServers()) run(layer, info) } },
+                { label: '去登录', onClick: () => { location.href = 'https://passport.bilibili.com/login?gourl=' + encodeURIComponent(location.href) } },
+                { label: '设置', kind: 'ghost', onClick: openSet },
             ],
         })
     }
 
-    showCard(layer, { title: '正在解锁…', text: '通过代理获取播放地址' })
+    // 授权过期且以前授权过：静默续期，不再打扰
+    if (!auth.accessKey && store.get('authorized_once', false) && !retriedAuth) {
+        showCard(layer, { title: '正在续期授权…', loading: true })
+        try { await auth.login(); return run(layer, info, { retriedAuth: true }) } catch (e) { log('silent re-auth failed', e.message) }
+    }
+
+    if (!auth.accessKey) {
+        return showCard(layer, {
+            icon: 'globe',
+            title: '这部内容在你所在的地区不可播放',
+            text: 'bili-unlock 可以通过代理服务器帮你播放。\n\n第一次使用需要授权一次：用当前登录的账号生成令牌，只保存在本浏览器，只发给代理服务器。',
+            buttons: [
+                { label: '授权并播放', onClick: () => doAuth(layer, info) },
+                { label: '设置', kind: 'ghost', onClick: openSet },
+            ],
+        })
+    }
+
+    showCard(layer, { title: '正在解锁…', text: `通过 ${config.servers[0].replace(/^https?:\/\//, '')} 获取播放地址`, loading: true })
     let got
     try {
         got = await requestPlayurl(info)
     } catch (e) {
         log('unlock failed', e.message)
+        if (e.needAuth && !retriedAuth) {
+            showCard(layer, { title: '授权已失效，正在重新授权…', loading: true })
+            try { await auth.login(); return run(layer, info, { retriedAuth: true }) } catch (e2) { log('re-auth failed', e2.message) }
+        }
         return showCard(layer, {
+            icon: 'globe',
             title: '解锁失败',
-            text: e.needAuth ? '代理提示未授权或授权已过期，可以重新授权。' : '所有代理都没返回可用的播放地址。',
+            text: e.needAuth ? '代理说没有授权。可以重新授权试试。' : '代理服务器没有返回可用的播放地址。可以换一个代理再试。',
             error: redact(e.message),
             buttons: [
                 { label: '重试', onClick: () => run(layer, info) },
-                { label: '重新授权', ghost: true, onClick: () => doAuth(layer, info) },
-                { label: '更换代理', ghost: true, onClick: () => { if (editServers()) run(layer, info) } },
-            ],
+                e.needAuth ? { label: '重新授权', kind: 'ghost', onClick: () => doAuth(layer, info) } : null,
+                { label: '更换代理', kind: 'ghost', onClick: openSet },
+            ].filter(Boolean),
         })
     }
 
-    const { result, server, area } = got
-    layer.replaceChildren()
-    const video = el('video', { controls: '', playsinline: '', preload: 'auto' })
-    layer.appendChild(video)
-    const bar = el('div', { class: 'bu-bar' })
-    layer.appendChild(bar)
     try {
-        if (result.dash) {
-            currentPlayer = await playDash(video, result.dash)
-            const dashjs = ownDashjs
-            currentPlayer.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
-                const list = currentPlayer.getBitrateInfoListFor('video') || []
-                if (list.length > 1) {
-                    const sel = el('select', { title: '画质' }, list.map((b, i) => el('option', { value: String(i), text: b.height ? `${b.height}P` : `#${i}` })).reverse())
-                    sel.value = String(list.length - 1)
-                    currentPlayer.setQualityFor('video', list.length - 1, true)
-                    sel.addEventListener('change', () => currentPlayer.setQualityFor('video', Number(sel.value), true))
-                    bar.prepend(sel)
-                }
-                log('stream ready', list.map(b => b.height).join('/'))
-            })
-        } else {
-            currentPlayer = playDurl(video, result)
-        }
-        const qn = result.quality
-        bar.appendChild(el('span', { text: `已解锁 · ${QN_NAME[qn] || qn || ''} · ${area.toUpperCase()}`, title: server }))
-        bar.appendChild(el('button', { text: '换代理', on: { click: () => { if (editServers()) run(layer, info) } } }))
-        video.addEventListener('error', () => log('video error', video.error && video.error.code))
-        video.addEventListener('playing', () => log('playing'), { once: true })
+        await startPlayer(layer, info, got)
     } catch (e) {
         log('player failed', e.message)
-        showCard(layer, { title: '播放器启动失败', error: e.message, buttons: [{ label: '重试', onClick: () => run(layer, info) }] })
+        showCard(layer, {
+            title: '播放器启动失败', error: redact(e.message),
+            buttons: [{ label: '重试', onClick: () => run(layer, info) }, { label: '反馈问题', kind: 'ghost', onClick: () => window.open('https://github.com/LucasYanzy/bili-unlock/issues/new') }],
+        })
     }
 }
 
+async function startPlayer(layer, info, { result, server, area }) {
+    layer.replaceChildren()
+    const video = el('video', { controls: true, playsinline: true, preload: 'auto' })
+    layer.appendChild(video)
+    current = { player: null, video, timers: [], cleanup: [] }
+
+    const { player, tracks, start } = result.dash
+        ? await playDash(video, result.dash, config.quality)
+        : playDurl(video, result)
+    current.player = player
+
+    // ---- 顶部操作栏 ----
+    const top = el('div', { class: 'bu-top' })
+    const host = server.replace(/^https?:\/\//, '')
+    top.appendChild(el('span', { class: 'bu-badge' }, [iconEl('lock'), '已解锁']))
+    top.appendChild(el('span', { class: 'bu-sub bu-grow', text: `${AREA_NAME[area] || area} · ${host}`, title: server }))
+
+    const qualityName = i => tracks[i] ? (QN_NAME[tracks[i].id] || `${tracks[i].height}P`) : '自动'
+    let quality = null
+    if (player && tracks.length > 1) {
+        quality = dropdown(qualityName(start), () => tracks.map((t, i) => ({ value: i, label: QN_NAME[t.id] || `${t.height}P`, hint: `${t.width}×${t.height}` })).reverse(), (i) => {
+            player.setQualityFor('video', i, true)
+            quality.set(qualityName(i), i)
+            toast(layer, '切换到 ' + qualityName(i))
+            log('quality', qualityName(i))
+        }, '画质')
+        quality.set(qualityName(start), start)
+        top.appendChild(quality.wrap)
+    }
+
+    const rateLabel = r => r === 1 ? '倍速' : r + 'x'
+    const setRate = r => { video.playbackRate = r; config.rate = r; rate.set(rateLabel(r), r) }
+    const rate = dropdown(rateLabel(config.rate), () => RATES.slice().reverse().map(r => ({ value: r, label: r + 'x' })), (r) => { setRate(r); toast(layer, '倍速 ' + r + 'x') }, '倍速')
+    rate.set(rateLabel(config.rate), config.rate)
+    top.appendChild(rate.wrap)
+
+    const accel = acceleratorMode()
+    if (accel) {
+        top.appendChild(el('button', {
+            class: 'bu-chip icon' + (accel !== 'off' ? ' on' : ''), title: `播放加速：${ACCEL_MODE_NAME[accel] || accel}（点击打开加速面板）`,
+            html: ICON.bolt, on: { click: () => openAcceleratorPanel() },
+        }))
+    }
+    const toggleWebFs = () => { layer.classList.toggle('bu-webfs'); toast(layer, layer.classList.contains('bu-webfs') ? '网页全屏（Esc 退出）' : '退出网页全屏') }
+    top.appendChild(el('button', { class: 'bu-chip icon', title: '网页全屏', html: ICON.expand, on: { click: toggleWebFs } }))
+    top.appendChild(el('button', { class: 'bu-chip icon', title: '设置', html: ICON.gear, on: { click: settingsAction(layer, info) } }))
+    layer.appendChild(top)
+
+    // 鼠标不动 2.5 秒隐藏操作栏
+    let idleTimer
+    const wake = () => { layer.classList.remove('bu-idle'); clearTimeout(idleTimer); idleTimer = setTimeout(() => { if (!video.paused) layer.classList.add('bu-idle') }, 2500) }
+    layer.addEventListener('mousemove', wake)
+    video.addEventListener('pause', wake)
+    document.addEventListener('click', () => layer.querySelectorAll('.bu-menu.open').forEach(m => m.classList.remove('open')))
+    wake()
+
+    // ---- 播放进度记忆 ----
+    const progKey = 'progress_' + info.epId
+    video.addEventListener('loadedmetadata', () => {
+        video.playbackRate = config.rate
+        const p = store.get(progKey, null)
+        if (config.resume && p && p.t > 10 && video.duration && p.t < video.duration - 20) {
+            video.currentTime = p.t
+            toast(layer, '已从 ' + fmtTime(p.t) + ' 继续播放', 2200)
+        }
+        if (config.autoplay) video.play().catch(() => toast(layer, '点击播放', 2000))
+    }, { once: true })
+    const saveProgress = () => {
+        if (!config.resume || !video.duration) return
+        if (video.currentTime > video.duration - 20) store.del(progKey)
+        else if (video.currentTime > 10) store.set(progKey, { t: Math.floor(video.currentTime), d: Math.floor(video.duration), at: Date.now() })
+    }
+    current.timers.push(setInterval(saveProgress, 5000))
+    video.addEventListener('pause', saveProgress)
+    window.addEventListener('pagehide', saveProgress)
+    current.cleanup.push(() => { saveProgress(); window.removeEventListener('pagehide', saveProgress) })
+
+    // ---- 快捷键（鼠标在播放器上或播放器有焦点时） ----
+    let hover = false
+    layer.addEventListener('mouseenter', () => { hover = true })
+    layer.addEventListener('mouseleave', () => { hover = false })
+    const onKey = (e) => {
+        if (!layer.isConnected || (!hover && !layer.contains(document.activeElement) && !layer.classList.contains('bu-webfs'))) return
+        if (/^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '') || e.target.isContentEditable) return
+        if (e.metaKey || e.ctrlKey || e.altKey) return
+        const k = e.key
+        let handled = true
+        if (k === ' ' || k === 'k') video.paused ? video.play() : video.pause()
+        else if (k === 'ArrowLeft') { video.currentTime = Math.max(0, video.currentTime - 5); toast(layer, '◀ ' + fmtTime(video.currentTime)) }
+        else if (k === 'ArrowRight') { video.currentTime = Math.min(video.duration || 1e9, video.currentTime + 5); toast(layer, fmtTime(video.currentTime) + ' ▶') }
+        else if (k === 'ArrowUp') { video.volume = Math.min(1, video.volume + 0.1); toast(layer, '音量 ' + Math.round(video.volume * 100) + '%') }
+        else if (k === 'ArrowDown') { video.volume = Math.max(0, video.volume - 0.1); toast(layer, '音量 ' + Math.round(video.volume * 100) + '%') }
+        else if (k === 'm') { video.muted = !video.muted; toast(layer, video.muted ? '静音' : '取消静音') }
+        else if (k === 'f') {
+            const fs = document.fullscreenElement || document.webkitFullscreenElement
+            if (fs) (document.exitFullscreen || document.webkitExitFullscreen).call(document)
+            else if (layer.requestFullscreen) layer.requestFullscreen().catch(() => { })
+            else if (layer.webkitRequestFullscreen) layer.webkitRequestFullscreen()
+            else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen()
+        }
+        else if (k === 'Escape' && layer.classList.contains('bu-webfs')) toggleWebFs()
+        else if (k === '[' || k === ']') {
+            const i = RATES.indexOf(video.playbackRate)
+            const r = RATES[Math.max(0, Math.min(RATES.length - 1, (i < 0 ? 2 : i) + (k === ']' ? 1 : -1)))]
+            setRate(r); toast(layer, '倍速 ' + r + 'x')
+        }
+        else handled = false
+        if (handled) { e.preventDefault(); e.stopPropagation(); wake() }
+    }
+    window.addEventListener('keydown', onKey, true)
+    current.cleanup.push(() => window.removeEventListener('keydown', onKey, true))
+
+    video.addEventListener('error', () => log('video error', video.error && video.error.code))
+    video.addEventListener('playing', () => log('playing', qualityName(start)), { once: true })
+    log('stream', tracks.map(t => QN_NAME[t.id] || t.height).join('/'))
+}
+
 async function doAuth(layer, info) {
-    showCard(layer, { title: '正在授权…', text: '使用当前登录的账号生成令牌' })
+    showCard(layer, { title: '正在授权…', text: '使用当前登录的账号生成令牌', loading: true })
     try {
         await auth.login()
         run(layer, info)
@@ -4980,7 +5429,7 @@ async function doAuth(layer, info) {
         log('auth failed', e.message)
         showCard(layer, {
             title: '授权失败', error: redact(e.message),
-            buttons: [{ label: '再试一次', onClick: () => doAuth(layer, info) }],
+            buttons: [{ label: '再试一次', onClick: () => doAuth(layer, info) }, { label: '设置', kind: 'ghost', onClick: settingsAction(layer, info) }],
         })
     }
 }
@@ -4991,18 +5440,23 @@ async function boot() {
     for (let i = 0; i < 40 && !(info = readPlayInfo()); i++) await new Promise(r => setTimeout(r, 250))
     log('page', location.pathname, info ? JSON.stringify({ blocked: info.blocked, ep: info.epId, cid: info.cid, type: info.playType, drm: info.isDrm }) : 'no playinfo', 'auth=' + (auth.accessKey ? 1 : 0))
     if (!info || !info.blocked) return
-    if (info.isDrm) return log('DRM 内容，无法解锁')
+    if (auth.accessKey) store.set('authorized_once', true)
 
     let layer = null
     for (let i = 0; i < 40 && !(layer = createLayer()); i++) await new Promise(r => setTimeout(r, 250))
     if (!layer) return log('找不到播放器区域')
     log('layer mounted in', layer.parentElement && (layer.parentElement.id || layer.parentElement.className))
+
+    if (info.isDrm) {
+        return showCard(layer, { title: '这部内容使用了 DRM 加密', text: 'bili-unlock 无法播放加密内容。', buttons: [] })
+    }
     run(layer, info)
 
     // B站 的 React 会重渲染播放器区域，把面板挤掉；被移除就挂回去（保留里面的状态）
     let reattach = 0
     setInterval(() => {
         if (layer.isConnected && layer.offsetWidth > 0) return
+        if (layer.classList.contains('bu-webfs') && layer.isConnected) return
         const box = findPlayerBox()
         if (!box) return
         if (getComputedStyle(box).position === 'static') box.style.position = 'relative'

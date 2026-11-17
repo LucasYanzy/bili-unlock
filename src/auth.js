@@ -13,7 +13,7 @@ const auth = {
         return t
     },
     get accessKey() { return this.token ? this.token.access_key : '' },
-    clear() { store.del('auth') },
+    clear() { store.del('auth'); store.del('authorized_once') },
 
     async login() {
         if (!getCookie('DedeUserID')) throw new Error('请先登录 B站')
@@ -48,6 +48,7 @@ const auth = {
         }
         if (!token.access_key) throw new Error('令牌为空')
         store.set('auth', token)
+        store.set('authorized_once', true)
         log('auth: ok, expires', new Date(token.expires_at).toLocaleDateString())
         return token
     },
