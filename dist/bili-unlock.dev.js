@@ -4438,7 +4438,7 @@
 ;(function biliUnlock() {
 'use strict'
 const __BU_DEV__ = true
-const __BU_VERSION__ = '0.1.4-dev'
+const __BU_VERSION__ = '0.1.5-dev'
 
 // ===== src/md5.js =====
 // 精简版 MD5（RFC 1321），只用于 B站 TV 登录接口的签名。
@@ -4522,7 +4522,8 @@ const redact = s => String(s).replace(SECRET_RE, '$1=***')
 const debugLines = []
 let debugBox = null
 function renderDebug() {
-    if (!__BU_DEV__ || window.top !== window) return
+    // 诊断小窗默认关闭；需要时在控制台执行 localStorage.bu_debug_box = 'true' 再刷新
+    if (!__BU_DEV__ || window.top !== window || store.get('debug_box', false) !== true) return
     if (!document.body) return void setTimeout(renderDebug, 200)
     if (!debugBox) {
         debugBox = document.createElement('pre')

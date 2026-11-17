@@ -2,7 +2,7 @@
 // @name         bili-unlock · B站解锁+加速
 // @name:en      bili-unlock
 // @namespace    https://github.com/LucasYanzy/bili-unlock
-// @version      0.1.4
+// @version      0.1.5
 // @description  B站 海外看番：解除地区限制（通过代理）+ 播放加速
 // @description:en Watch region-locked Bilibili shows from abroad via a proxy, with smoother playback.
 // @author       LucasYanzy
@@ -4458,7 +4458,7 @@
 ;(function biliUnlock() {
 'use strict'
 const __BU_DEV__ = false
-const __BU_VERSION__ = '0.1.4'
+const __BU_VERSION__ = '0.1.5'
 
 // ===== src/md5.js =====
 // 精简版 MD5（RFC 1321），只用于 B站 TV 登录接口的签名。
@@ -4542,7 +4542,8 @@ const redact = s => String(s).replace(SECRET_RE, '$1=***')
 const debugLines = []
 let debugBox = null
 function renderDebug() {
-    if (!__BU_DEV__ || window.top !== window) return
+    // 诊断小窗默认关闭；需要时在控制台执行 localStorage.bu_debug_box = 'true' 再刷新
+    if (!__BU_DEV__ || window.top !== window || store.get('debug_box', false) !== true) return
     if (!document.body) return void setTimeout(renderDebug, 200)
     if (!debugBox) {
         debugBox = document.createElement('pre')

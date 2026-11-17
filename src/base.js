@@ -8,7 +8,8 @@ const redact = s => String(s).replace(SECRET_RE, '$1=***')
 const debugLines = []
 let debugBox = null
 function renderDebug() {
-    if (!__BU_DEV__ || window.top !== window) return
+    // 诊断小窗默认关闭；需要时在控制台执行 localStorage.bu_debug_box = 'true' 再刷新
+    if (!__BU_DEV__ || window.top !== window || store.get('debug_box', false) !== true) return
     if (!document.body) return void setTimeout(renderDebug, 200)
     if (!debugBox) {
         debugBox = document.createElement('pre')
