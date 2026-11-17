@@ -1,25 +1,27 @@
 // ---- 把代理返回的 DASH 数据变成 MPD，用 dash.js 播放 ----
 
-const DASHJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/dashjs/4.7.4/dash.all.min.js'
+// 纯播放器版本：不带 DRM/EME 模块（用不上，而且 Safari 上 EME 检测会出错）
+const DASHJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/dashjs/4.7.4/dash.mediaplayer.min.js'
 const QN_NAME = { 127: '8K', 126: '杜比视界', 125: 'HDR', 120: '4K', 116: '1080P60', 112: '1080P+', 80: '1080P', 74: '720P60', 64: '720P', 32: '480P', 16: '360P' }
 
-// B站 页面自带一个精简版 window.dashjs（没有 Debug 等），不能直接用。
-// 加载我们自己的完整版，私下保存一份，再把 B站 的还原回去。
+// B站 页面自带一个精简版 window.dashjs（没有 Debug 等）。dash.js 内部组件会通过
+// window.dashjs 互相查找，两套混用会出错。被限制的页面上 B站 自己的播放器不工作，
+// 所以这里直接让 window.dashjs 指向我们的完整版，不再还原。
 let ownDashjs = null
 function loadDashJs() {
     if (ownDashjs) return Promise.resolve(ownDashjs)
     return new Promise((resolve, reject) => {
         const pageDashjs = window.dashjs
-        try { delete window.dashjs } catch (_) { window.dashjs = undefined }
-        const restore = () => { if (pageDashjs) window.dashjs = pageDashjs }
+        try { delete window.dashjs } catch (_) { }
+        if (window.dashjs) window.dashjs = undefined
         const s = document.createElement('script')
         s.src = DASHJS_URL
         s.onload = () => {
             const d = window.dashjs
-            restore()
-            if (d && d.MediaPlayer && d.Debug) { ownDashjs = d; resolve(d) } else reject(new Error('dash.js 加载后不完整'))
+            if (d && d.MediaPlayer && d.Debug && d !== pageDashjs) { ownDashjs = d; resolve(d) }
+            else reject(new Error('dash.js 加载后不完整'))
         }
-        s.onerror = () => { restore(); reject(new Error('dash.js 加载失败（cdnjs 不可用？）')) }
+        s.onerror = () => { if (pageDashjs) window.dashjs = pageDashjs; reject(new Error('dash.js 加载失败（cdnjs 不可用？）')) }
         document.head.appendChild(s)
     })
 }
